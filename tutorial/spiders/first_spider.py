@@ -1,5 +1,8 @@
 import datetime, time
 import scrapy
+import json
+import requests
+import asyncio
 
 
 data_view = {
@@ -47,31 +50,34 @@ class ProxySpider(scrapy.Spider):
                     'port':port,
                 }
 
+
 class Wildberries(scrapy.Spider):
     name = 'wild'
 
+    cookies = {
+        '__cpns':'3_12_15_18',
+        '__pricemargin':'1.0--',
+        '__region':'75_68_69_63_33_40_48_70_64_1_4_30_71_22_38_31_66',
+        '__store':'119261_117673_115577_507_3158_120602_6158_117501_120762_116433_119400_2737_117986_1699_1733_117413_119070_118106_119781',
+        '__wbl':r'cityId%3D77%26regionId%3D77%26city%3D%D0%9C%D0%BE%D1%81%D0%BA%D0%B2%D0%B0%26phone%3D84957755505%26latitude%3D55%2C7247%26longitude%3D37%2C7882'
+    }
+
     def start_requests(self):
-        url = 'https://www.wildberries.ru/catalog/yuvelirnye-izdeliya/zazhimy-i-zaponki'
-        __wbl = r'cityId%3D4355%26regionId%3D34%26city%3D%D0%92%D0%BE%D0%BB%D0%B3%D0%BE%D0%B3%D1%80%D0%B0%D0%B4%26phone%3D88001007505%26latitude%3D48%2C707073%26longitude%3D44%2C51693'
-        region = r'75_68_69_63_33_40_48_70_64_1_4_30_71_22_38_31_66'
-        store = r'115577_116433_117501_507_3158_120602_6158_119400_120762_2737_117986_1699_1733_117673_119261_117413_119070_118106_119781'
-
-        yield scrapy.Request(url, callback=self.parse
-        , cookies={
-                '__wbl':__wbl,
-                '__region':region,
-                '__store':store,
-            })
-        # yield scrapy.Request(url, callback=self.parse, meta={'proxy':'http://{}:{}'.format(proxy['ip'], proxy['port'])})
-
+        urls = [
+            'https://www.wildberries.ru/catalog/yuvelirnye-izdeliya/zazhimy-i-zaponki',
+            # 'https://www.wildberries.ru/',
+            # 'https://www.wildberries.ru/catalog/pitanie',
+        ]
+        for url in urls:
+            yield scrapy.Request(url, callback=self.parse, cookies=self.cookies)
+        
     def parse(self, response):
         for element in response.css('div.j-card-item'):
             product_url = element.css('a.j-open-full-product-card::attr(href)').get().split('?')[0]
             yield response.follow(product_url, callback=self.get_data)
-        
 
-        next_page = response.css('a.pagination-next::attr(href)').get()
         if next_page is not None:
+            next_page = response.urljoin(next_page)
             yield response.follow(next_page, callback=self.parse)
 
     def get_data(self, response):
@@ -115,7 +121,7 @@ class Wildberries(scrapy.Spider):
         }
         data_view['variants'] = 1
 
-        yield data_view
+        # yield data_view
 
     def get_delta(current, origin):
         return int(origin) - int(current)
