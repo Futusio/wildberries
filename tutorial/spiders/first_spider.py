@@ -63,13 +63,8 @@ class Wildberries(scrapy.Spider):
     }
 
     def start_requests(self):
-        urls = [
-            'https://www.wildberries.ru/catalog/yuvelirnye-izdeliya/zazhimy-i-zaponki',
-            # 'https://www.wildberries.ru/',
-            # 'https://www.wildberries.ru/catalog/pitanie',
-        ]
-        for url in urls:
-            yield scrapy.Request(url, callback=self.parse, cookies=self.cookies)
+        url = 'https://www.wildberries.ru/catalog/yuvelirnye-izdeliya/zazhimy-i-zaponki'
+        yield scrapy.Request(url, callback=self.parse, cookies=self.cookies)
         
     def parse(self, response):
         for element in response.css('div.j-card-item'):
@@ -121,7 +116,7 @@ class Wildberries(scrapy.Spider):
         }
         data_view['variants'] = 1
 
-        # yield data_view
+        yield data_view
 
     def get_delta(current, origin):
         return int(origin) - int(current)
