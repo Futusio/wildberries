@@ -3,6 +3,7 @@ import scrapy
 import json
 import requests
 import asyncio
+import re
 
 
 data_view = {
@@ -54,7 +55,7 @@ class ProxySpider(scrapy.Spider):
 class Wildberries(scrapy.Spider):
     name = 'wild'
 
-    cookies = {
+    cookies = { # Только при отправке 5 кук получаю корректный куки в ответ
         '__cpns':'3_12_15_18',
         '__pricemargin':'1.0--',
         '__region':'75_68_69_63_33_40_48_70_64_1_4_30_71_22_38_31_66',
@@ -63,60 +64,182 @@ class Wildberries(scrapy.Spider):
     }
 
     def start_requests(self):
-        url = 'https://www.wildberries.ru/catalog/yuvelirnye-izdeliya/zazhimy-i-zaponki'
-        yield scrapy.Request(url, callback=self.parse, cookies=self.cookies)
+        # Оставил закоменченные юрлы, на которых тестировал скрапинг видео и view360
+        urls = [
+            # "https://www.wildberries.ru/catalog/10765528/detail.aspx", # Тут есть 360
+            # "https://www.wildberries.ru/catalog/13248914/detail.aspx", # Еще 360
+            # "https://www.wildberries.ru/catalog/3908404/detail.aspx", # Видео
+            # "https://www.wildberries.ru/catalog/16182548/detail.aspx", # Ноутбуки показывают путю
+            "https://www.wildberries.ru/catalog/yuvelirnye-izdeliya/zazhimy-i-zaponki",
+        ]
+        # С кукками все красиво
+        for url in urls:
+            yield scrapy.Request(url, callback=self.parse, cookies=self.cookies)
         
     def parse(self, response):
+        """ Помимо вытаскивания ссылок и перехода по страницам магазина
+        В данном методе так же сразу вытаскивается section, который передается
+        в последующие функции, т.к. на страницах товаров редко присутствует дерево секций """
+        attr = [] # Тут будет хранится секция 
+        for i in response.xpath('//script').getall():
+            r = re.findall(r'google_tag_params', i)
+            if len(r) > 0:
+                s = i.replace('\n', '')
+                b = re.findall('"Pcat": (.*)]', s)
+                attr = re.findall('"(.*)"', b[0]) # Нужный массив
+        # Вместе с запросом передаем dict(meta) для получения секций в итоговом объекте
         for element in response.css('div.j-card-item'):
             product_url = element.css('a.j-open-full-product-card::attr(href)').get().split('?')[0]
-            yield response.follow(product_url, callback=self.get_data)
-
+            product_url = response.urljoin(product_url)
+            yield scrapy.Request(product_url, callback=self.schedule_data, cookies=self.cookies, meta={'section':attr})
+        # Возможно, необходимо переписать follow на Request. Но это тема для обсуждения, поэтому пока что оставлю 
         if next_page is not None:
             next_page = response.urljoin(next_page)
             yield response.follow(next_page, callback=self.parse)
 
-    def get_data(self, response):
+    def schedule_data(self, response):
+        """ Решил вынести логику длинее одной строки в отдельный метод,
+        после того, как его размеры увеличились. 
+        Код стало гораздо удобнее читать и исправлять """
         data_view = {}
-        # timestamp ( если нужен все же читабельный вид, то
-        data_view['timestamp'] = str(int(time.mktime(datetime.datetime.now().timetuple())))
-        # RPC - Артикль и URL товара
-        data_view['RPC'] = str(response.url.split('/')[-2])
+        data_view['timestamp'] = self.extract_data(response, key='timestamp')
+        data_view['RPC'] = self.extract_data(response, key='RPC')
         data_view['url'] = response.url
-        # Почти все товары имеют цвет
-        data_view['title'] = '{}, {}'.format(response.css('span.name::text').get(), response.css('span.color::text').get())
+        data_view['title'] = self.extract_data(response, key='title')
         data_view['brand'] = response.css('span.brand::text').get()
-        # Секция была выбрана заранее
-        data_view['section'] = ['Ювелирные изделия', 'Зажимы, запонки, ремни']
-        # Ниже цены    
-        current = ''.join(list(filter(lambda x: x.isdigit(), response.css('span.final-cost::text').get()))) # Строка содержит много хлама, нас интересуют только цифры
-        data_view['price_data'] = {
-            'current': current,
-        }
-        if response.css('div.c-text-base::text').get() is not None:
-            origin = ''.join(list(filter(lambda x: x.isdigit(), response.css('div.c-text-base::text').get())))
-            data_view['price_data']['origin'] = origin
-            data_view['price_data']['sate_tag'] = "Скидка: {}%".format(get_delta(current, origin))
-        # Нигде не увидел отображения наличия\отсутствия товаров. Везде самовывоз
-        data_view['stock'] = {
-            'in_stock': True,
-            'count': 0,
-        }
-        # Помимо описания у всех товаров одинаковая структура параметров
-        data_view['meta'] = {
-            '__description':  response.css('div.j-description p::text').get()
-        }
-        for param in response.css('div.pp'):
-            data_view['meta'][param.css('b::text').get()] = param.css('span::text').get()
-        # Фоточки
-        data_view['assets'] = {
-            'main_image': response.css('a.j-photo-link::attr(href)').get(), # Ссылка на основное изображение товара
-            'set_image': response.css('a.j-photo-link::attr(href)').getall(), # Список всех изображений товара
-            'view360': [],
-            'video': [], 
-        }
-        data_view['variants'] = 1
+        data_view['section'] = response.meta['section']
+        data_view['price_data'] = self.extract_data(response, key='price_data')
+        data_view['stock'] = self.extract_data(response, key='stock')
+        data_view['metadata'] = self.extract_data(response, key='metadata')
+        data_view['assets'] = self.extract_data(response, key='assets')
+        data_view['variants'] = self.extract_data(response, key='variants')
 
         yield data_view
 
-    def get_delta(current, origin):
-        return int(origin) - int(current)
+    def extract_data(self, response, key):
+        """ Метод получает ключ и возвращает результат
+        выполнения функции вычисления значения ключа """
+        def get_timestamp(response):
+            """Возвращает время timestamp"""
+            # Unix time stamp. ex. 1608985712
+            unix = time.mktime(datetime.datetime.now().timetuple())
+            result = str(int(unix))
+            # Date time format. ex 26.12.2020 16:48
+            # value = datetime.datetime.fromtimestamp(unix)
+            # result =  value.strftime('%d.%m.%Y %H:%M')
+            return result
+
+        def get_RPC(response):
+            """ RPC поулчаем из URL товара. Так же он
+            совпадает с Артиклем товара """
+            return str(response.url.split('/')[-2])
+        
+        def get_title(response):
+            """ Получаем имя товара и цвет при наличии """
+            name = response.css('span.name::text').get()
+            color = response.css('span.color::text').get()
+            if color is not None:
+                return '{}, {}'.format(name, color)
+            return name
+
+        def get_price(response):
+            """ Вычисляем цену. Если есть скидка берем значения старой и новой цены
+            после чего вычисляем процент скидки на позицию """
+            try:
+                final_cost = response.css('span.final-cost::text').get()
+                current = float(''.join(list(filter(lambda x: x.isdigit(), final_cost))))
+                old_price = response.css('span.old-price').get()
+                if old_price is not None: 
+                    # Если есть старая цена нужно вычислить скидку
+                    origin = float(''.join(list(filter(lambda x: x.isdigit(), old_price))))
+                    sale_tag = int(100 - ((100*current)/origin))
+                    return {
+                        'current': current,
+                        'origin': origin,
+                        'sale_tag': 'Скидка {}%'.format(sale_tag),
+                    }
+            # Если товар отсутствует будет брошено исключение
+            except TypeError:
+                current = float(0)
+            # Если скидки нет - возвращаем следующий словарь
+            return {
+                'current': current,
+                'origin': current,
+            }
+
+        def get_stock(response):
+            """ Получаем значения наличия товара. Данные о кол-ве оставшихся
+            до сих пор не нашел. Текущий код не долговечен, т.к. json хранящий информацию
+            находтися под комментарием:" Удалить, когда гугл что-то там поменяет" """
+            in_stock = ""
+            for item in response.xpath('//script'): 
+                r = re.findall(r'data: {.*', item.get()) # Получаем словарь data
+                if len(r) > 0:
+                    in_stock = re.findall(r'"isSoldOut":(\w+)', r[0])[0] # Получаем значения ключа isSoldOut
+                    break
+            return {
+                'in_stock': True if in_stock == 'false' else False,
+                'count': 0,
+            }
+
+        def get_assets(response):
+            """ Это было интересно. Сразу берем главную картинку и список
+            всех остальных. Дальше проверяем наличие видео и view360, в случае 
+            наличия - вычисляем и их. Аккуратно! Ниже хрупкий костыль """
+            add_prefix = lambda x: 'https:' + str(x)
+            result = {            
+                'main_image': add_prefix(response.css('a.j-photo-link::attr(href)').get()), # Ссылка на основное изображение товара
+                'set_image':  list(map(add_prefix, response.css('a.j-photo-link::attr(href)').getall())), # Список всех изображений товара
+                'video': [],
+                'view360': [],
+            }
+            # В первую очередь проверяем наличие 360 и Видео на товаре
+            has_video, has_view360 = "", ""
+            for item in response.xpath('//script'):
+                r = re.findall(r'data: {.*', item.get()) # Получаем словарь data
+                if len(r) > 0:
+                    has_video = re.findall(r'"hasVideo":(\w+)', r[0])[0]
+                    has_view360 = re.findall(r'"has3D":(\w+)', r[0])[0]
+            # Если есть видео добавляем
+            if has_video == 'true': 
+                for selector in response.xpath("//meta[@property='og:video']").getall():
+                    result['video'] = list(map(add_prefix, re.findall(r'content="(.*)"', selector)))
+
+            # А тут костыльное решение сильно замедляющее работу
+            if has_view360 == 'true':
+                root = 'https:' + response.css("div#container_3d::attr(data-path)").get()
+                counter = 0
+                while True: # Какую прекрасную багулину тут словил, когда mapper сразу вычислял функции
+                    if requests.get('{}/{}.jpg'.format(root, counter)).status_code == 404:
+                        break
+                    result['view360'].append('{}/{}.jpg'.format(root, counter))
+                    counter += 1
+
+            return result
+
+        def get_meta(response):
+            """ Возвращает словарь содержащий описание, а так же 
+            все параметры, находящиеся на странице позиции """
+            result = {'__description':  response.css('div.j-description p::text').get()} # Описание есть у всех товаров
+            for param in response.css('div.pp'): # А дальше проходим по списку параметров
+                result[param.css('b::text').get()] = param.css('span::text').get()
+            return result
+
+        def get_variants(response):
+            """ Получаем кол-во вариантов товаров. Хранятся в блоке options """
+            variants = len(response.css('div.options div div ul li').getall())
+            return 1 if variants == 0 else variants # Если options.li пуст - значит всего 1 вариант
+
+        # Mapper соотносит ключ с функцией 
+        mapper = {
+            'timestamp': get_timestamp,
+            'RPC': get_RPC,
+            'title': get_title,
+            'price_data': get_price,
+            'stock': get_stock,
+            'metadata': get_meta,
+            'assets': get_assets,
+            'variants': get_variants,
+        }
+
+        return mapper[key](response)
