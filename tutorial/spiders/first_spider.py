@@ -28,29 +28,23 @@ class Wildberries(scrapy.Spider):
     name = 'wild'
 
     def start_requests(self):
-        # Оставил закоменченные юрлы, на которых тестировал скрапинг видео и view360
-        # urls = [
-        #     # "https://www.wildberries.ru/catalog/10765528/detail.aspx", # Тут есть 360
-        #     # "https://www.wildberries.ru/catalog/13248914/detail.aspx", # Еще 360
-        #     # "https://www.wildberries.ru/catalog/3908404/detail.aspx", # Видео
-        #     # "https://www.wildberries.ru/catalog/16182548/detail.aspx", # Ноутбуки показывают пути
-        #     "https://www.wildberries.ru/catalog/yuvelirnye-izdeliya/zazhimy-i-zaponki",
-        # ]
-        # # С кукками все красиво
-        # for url in urls:
-        #     yield scrapy.Request(url, callback=self.parse)
+        urls = [
+            "https://www.wildberries.ru/catalog/yuvelirnye-izdeliya/zazhimy-i-zaponki",
+        ]
+        # С кукками все красиво
+        for url in urls:
+            yield scrapy.Request(url, callback=self.parse)
 
         # Раскоментить код ниже, чтоб посмотреть на вывод с:
         # Отсутствием товара, наличием видео и view360
-        urls = [
-            "https://www.wildberries.ru/catalog/10765528/detail.aspx", # Тут есть 360
-            "https://www.wildberries.ru/catalog/13248914/detail.aspx", # Еще 360
-            "https://www.wildberries.ru/catalog/3908404/detail.aspx", # Видео
-            "https://www.wildberries.ru/catalog/16182548/detail.aspx", # Ноутбуки показывают пути
-            # "https://www.wildberries.ru/catalog/yuvelirnye-izdeliya/zazhimy-i-zaponki",
-        ]
-        for url in urls:
-            yield scrapy.Request(url, callback=self.schedule_data)
+        # urls = [
+        #     "https://www.wildberries.ru/catalog/10765528/detail.aspx", # Тут есть 360
+        #     "https://www.wildberries.ru/catalog/13248914/detail.aspx", # Еще 360
+        #     "https://www.wildberries.ru/catalog/3908404/detail.aspx", # Видео
+        #     "https://www.wildberries.ru/catalog/16182548/detail.aspx", # Ноутбуки показывают пути
+        # ]
+        # for url in urls:
+        #     yield scrapy.Request(url, callback=self.schedule_data)
 
         
     def parse(self, response):
@@ -72,6 +66,7 @@ class Wildberries(scrapy.Spider):
             product_url = response.urljoin(product_url)
             yield scrapy.Request(product_url, callback=self.schedule_data, meta={'section':attr})
         # Возможно, необходимо переписать follow на Request. Но это тема для обсуждения, поэтому пока что оставлю 
+        next_page = response.css('a.pagination-next::attr(href)').get()
         if next_page is not None:
             next_page = response.urljoin(next_page)
             yield response.follow(next_page, callback=self.parse)
