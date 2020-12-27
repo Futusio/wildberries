@@ -52,11 +52,20 @@ PROXY_POOL_ENABLED = True
 # Enable or disable downloader middlewares
 # See https://docs.scrapy.org/en/latest/topics/downloader-middleware.html
 
-# DOWNLOADER_MIDDLEWARES = {
-#     # 'tutorial.middlewares.TutorialDownloaderMiddleware': 543,
-#     'scrapy_proxy_pool.middlewares.ProxyPoolMiddleware': 610,   
-#     'scrapy_proxy_pool.middlewares.BanDetectionMiddleware': 620,
-# }
+DOWNLOADER_MIDDLEWARES = {
+    'tutorial.middlewares.ProxyMiddleware': 420,
+}
+
+PROXY_SETTINGS = {
+    'PROXY_LIST':[
+        'http://191.102.142.168:10030',
+        'http://191.102.142.168:10030',
+        'http://51.75.147.43:3128',
+        'http://139.99.102.114:80',
+    ],
+    'PROXY_TIMEOUT': 3,
+    'PROXY_RETRY_COUNT': 3,
+}
 
 # Enable or disable extensions
 # See https://docs.scrapy.org/en/latest/topics/extensions.html
