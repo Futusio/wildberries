@@ -55,6 +55,7 @@ PROXY_POOL_ENABLED = True
 
 DOWNLOADER_MIDDLEWARES = {
     'tutorial.middlewares.ProxyMiddleware': 420,
+    'tutorial.middlewares.CookiesMiddleware': 247,
 }
 
 
