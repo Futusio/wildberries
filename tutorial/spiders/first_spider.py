@@ -1,39 +1,9 @@
 import datetime, time
-import scrapy
 import json
-import requests
-import asyncio
 import re
 
-
-data_view = {
-    'timestamp': None, # timestamp
-    'RPC': None, # UUID
-    'url': None, # ссылка на страницу товара 
-    'title': None, # Заголовок, название товара
-    'marketing_tags': None, # Tags ['one', 'two', 'three']
-    'brand': None, # Бренд Товара
-    'section': None, # ['root','root's child']
-    'price_data': {
-        'current':None, # Цена со скидкой
-        'original': None,
-        'sale_tag': None, # Процент скидки
-    },
-    'stock':{
-        'in_stock': None, # Bool(Наличие товара)
-        'count': None, # Если есть информация о кол-ве товара, иначе 0
-    },
-    'assets':{
-        'main_image': None, # Ссылка на основное изображение товара
-        'set_image': None, # Список всех изображений товара
-        'view360': None, # Видимо ссылкан на 360, если имеется
-        'video': None, # Список видео
-    },
-    'metadata':{
-        '__description':None, # Описание товара,
-    },
-    'variants':  None, # Integer varitans of the position
-}
+import requests
+import scrapy
 
 
 class ProxySpider(scrapy.Spider):
@@ -46,10 +16,20 @@ class ProxySpider(scrapy.Spider):
             isSecurity = row.xpath("td[@class='hx']/text()").get()
             if isSecurity == 'yes':
                 ip, port = row.xpath('td/text()').getall()[:2]
-                yield {
-                    'ip':ip,
-                    'port':port,
+                proxies = {
+                    'http':'{}:{}'.format(ip, port),
+                    'https': '{}:{}'.format(ip, port),
                 }
+                try:
+                    # В случае неудача рейзит exception 
+                    requests.get('https://www.wildberries.ru/', proxies=proxies, timeout=1)
+                except: 
+                    continue
+                else: # Только в случае получения ответа записываем прокси в файл
+                    yield {
+                        'ip':ip,
+                        'port':port,
+                    }
 
 
 class Wildberries(scrapy.Spider):
@@ -79,14 +59,15 @@ class Wildberries(scrapy.Spider):
     def parse(self, response):
         """ Помимо вытаскивания ссылок и перехода по страницам магазина
         В данном методе так же сразу вытаскивается section, который передается
-        в последующие функции, т.к. на страницах товаров редко присутствует дерево секций """
-        attr = [] # Тут будет хранится секция 
+        в последующие функции, т.к. на страницах товаров редко присутствует дерево секций.
+        """
+        attr = [] 
         for i in response.xpath('//script').getall():
             r = re.findall(r'google_tag_params', i)
             if len(r) > 0:
                 s = i.replace('\n', '')
                 b = re.findall('"Pcat": (.*)]', s)
-                attr = re.findall('"(.*)"', b[0]) # Нужный массив
+                attr = re.findall('"(.*)"', b[0])  # Нужный массив
         # Вместе с запросом передаем dict(meta) для получения секций в итоговом объекте
         for element in response.css('div.j-card-item'):
             product_url = element.css('a.j-open-full-product-card::attr(href)').get().split('?')[0]
@@ -100,11 +81,13 @@ class Wildberries(scrapy.Spider):
     def schedule_data(self, response):
         """ Решил вынести логику длинее одной строки в отдельный метод,
         после того, как его размеры увеличились. 
-        Код стало гораздо удобнее читать и исправлять """
+        Код стало гораздо удобнее читать и исправлять.
+        """
         data_view = {}
         data_view['timestamp'] = self.extract_data(response, key='timestamp')
         data_view['RPC'] = self.extract_data(response, key='RPC')
         data_view['url'] = response.url
+        data_view['marketing_tags'] = response.css('li.tags-group-item.j-tag a::text').getall()
         data_view['title'] = self.extract_data(response, key='title')
         data_view['brand'] = response.css('span.brand::text').get()
         data_view['section'] = response.meta['section']
@@ -118,10 +101,11 @@ class Wildberries(scrapy.Spider):
 
     def extract_data(self, response, key):
         """ Метод получает ключ и возвращает результат
-        выполнения функции вычисления значения ключа """
+        выполнения функции вычисления значения ключа.
+        """
         def get_timestamp(response):
             """Возвращает время timestamp"""
-            # Unix time stamp. ex. 1608985712
+            # Unix timestamp. ex. 1608985712
             unix = time.mktime(datetime.datetime.now().timetuple())
             result = str(int(unix))
             # Date time format. ex 26.12.2020 16:48
@@ -131,7 +115,8 @@ class Wildberries(scrapy.Spider):
 
         def get_RPC(response):
             """ RPC поулчаем из URL товара. Так же он
-            совпадает с Артиклем товара """
+            совпадает с Артиклем товара.
+            """
             return str(response.url.split('/')[-2])
         
         def get_title(response):
@@ -143,8 +128,9 @@ class Wildberries(scrapy.Spider):
             return name
 
         def get_price(response):
-            """ Вычисляем цену. Если есть скидка берем значения старой и новой цены
-            после чего вычисляем процент скидки на позицию """
+            """Вычисляем цену. Если есть скидка берем значения старой и новой цены
+            после чего вычисляем процент скидки на позицию 
+            """
             try:
                 final_cost = response.css('span.final-cost::text').get()
                 current = float(''.join(list(filter(lambda x: x.isdigit(), final_cost))))
@@ -168,9 +154,10 @@ class Wildberries(scrapy.Spider):
             }
 
         def get_stock(response):
-            """ Получаем значения наличия товара. Данные о кол-ве оставшихся
+            """Получаем значения наличия товара. Данные о кол-ве оставшихся
             до сих пор не нашел. Текущий код не долговечен, т.к. json хранящий информацию
-            находтися под комментарием:" Удалить, когда гугл что-то там поменяет" """
+            находтися под комментарием:" Удалить, когда гугл что-то там поменяет" 
+            """
             in_stock = ""
             for item in response.xpath('//script'): 
                 r = re.findall(r'data: {.*', item.get()) # Получаем словарь data
@@ -185,7 +172,8 @@ class Wildberries(scrapy.Spider):
         def get_assets(response):
             """ Это было интересно. Сразу берем главную картинку и список
             всех остальных. Дальше проверяем наличие видео и view360, в случае 
-            наличия - вычисляем и их. Аккуратно! Ниже хрупкий костыль """
+            наличия - вычисляем и их. Аккуратно! Ниже хрупкий костыль
+            """
             add_prefix = lambda x: 'https:' + str(x)
             result = {            
                 'main_image': add_prefix(response.css('a.j-photo-link::attr(href)').get()), # Ссылка на основное изображение товара
@@ -219,7 +207,8 @@ class Wildberries(scrapy.Spider):
 
         def get_meta(response):
             """ Возвращает словарь содержащий описание, а так же 
-            все параметры, находящиеся на странице позиции """
+            все параметры, находящиеся на странице позиции
+            """
             result = {'__description':  response.css('div.j-description p::text').get()} # Описание есть у всех товаров
             for param in response.css('div.pp'): # А дальше проходим по списку параметров
                 result[param.css('b::text').get()] = param.css('span::text').get()
