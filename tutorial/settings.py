@@ -6,6 +6,7 @@
 #     https://docs.scrapy.org/en/latest/topics/settings.html
 #     https://docs.scrapy.org/en/latest/topics/downloader-middleware.html
 #     https://docs.scrapy.org/en/latest/topics/spider-middleware.html
+import json
 
 BOT_NAME = 'tutorial'
 
@@ -56,15 +57,23 @@ DOWNLOADER_MIDDLEWARES = {
     'tutorial.middlewares.ProxyMiddleware': 420,
 }
 
+
+def get_proxies_list():
+    """ Получаем proxies list из proxies.json """
+    with open('proxies.json', 'r') as f:
+        proxies = json.loads(f.read())
+    try:
+        result = list(map(\
+            lambda x: 'http://{}:{}'.format(x['ip'],x['port']), proxies))
+    except: 
+        result = []
+    return result
+
+
 PROXY_SETTINGS = {
-    'PROXY_LIST':[
-        'http://191.102.142.168:10030',
-        'http://191.102.142.168:10030',
-        'http://51.75.147.43:3128',
-        'http://139.99.102.114:80',
-    ],
+    'PROXY_LIST': get_proxies_list(),
     'PROXY_TIMEOUT': 3,
-    'PROXY_RETRY_COUNT': 3,
+    'PROXY_RETRY_COUNT': 1,
 }
 
 # Enable or disable extensions
