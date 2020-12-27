@@ -24,28 +24,34 @@ class ProxySpider(scrapy.Spider):
 
 
 class Wildberries(scrapy.Spider):
+    """ Скрапер wildberries С ProxyMiddleware """
     name = 'wild'
-
-    cookies = { # Только при отправке 5 кук получаю корректный куки в ответ
-        '__cpns':'3_12_15_18',
-        '__pricemargin':'1.0--',
-        '__region':'75_68_69_63_33_40_48_70_64_1_4_30_71_22_38_31_66',
-        '__store':'119261_117673_115577_507_3158_120602_6158_117501_120762_116433_119400_2737_117986_1699_1733_117413_119070_118106_119781',
-        '__wbl':r'cityId%3D77%26regionId%3D77%26city%3D%D0%9C%D0%BE%D1%81%D0%BA%D0%B2%D0%B0%26phone%3D84957755505%26latitude%3D55%2C7247%26longitude%3D37%2C7882'
-    }
 
     def start_requests(self):
         # Оставил закоменченные юрлы, на которых тестировал скрапинг видео и view360
+        # urls = [
+        #     # "https://www.wildberries.ru/catalog/10765528/detail.aspx", # Тут есть 360
+        #     # "https://www.wildberries.ru/catalog/13248914/detail.aspx", # Еще 360
+        #     # "https://www.wildberries.ru/catalog/3908404/detail.aspx", # Видео
+        #     # "https://www.wildberries.ru/catalog/16182548/detail.aspx", # Ноутбуки показывают пути
+        #     "https://www.wildberries.ru/catalog/yuvelirnye-izdeliya/zazhimy-i-zaponki",
+        # ]
+        # # С кукками все красиво
+        # for url in urls:
+        #     yield scrapy.Request(url, callback=self.parse)
+
+        # Раскоментить код ниже, чтоб посмотреть на вывод с:
+        # Отсутствием товара, наличием видео и view360
         urls = [
-            # "https://www.wildberries.ru/catalog/10765528/detail.aspx", # Тут есть 360
-            # "https://www.wildberries.ru/catalog/13248914/detail.aspx", # Еще 360
-            # "https://www.wildberries.ru/catalog/3908404/detail.aspx", # Видео
-            # "https://www.wildberries.ru/catalog/16182548/detail.aspx", # Ноутбуки показывают пути
-            "https://www.wildberries.ru/catalog/yuvelirnye-izdeliya/zazhimy-i-zaponki",
+            "https://www.wildberries.ru/catalog/10765528/detail.aspx", # Тут есть 360
+            "https://www.wildberries.ru/catalog/13248914/detail.aspx", # Еще 360
+            "https://www.wildberries.ru/catalog/3908404/detail.aspx", # Видео
+            "https://www.wildberries.ru/catalog/16182548/detail.aspx", # Ноутбуки показывают пути
+            # "https://www.wildberries.ru/catalog/yuvelirnye-izdeliya/zazhimy-i-zaponki",
         ]
-        # С кукками все красиво
         for url in urls:
-            yield scrapy.Request(url, callback=self.parse, cookies=self.cookies)
+            yield scrapy.Request(url, callback=self.schedule_data)
+
         
     def parse(self, response):
         """Помимо вытаскивания ссылок и перехода по страницам магазина
@@ -64,7 +70,7 @@ class Wildberries(scrapy.Spider):
         for element in response.css('div.j-card-item'):
             product_url = element.css('a.j-open-full-product-card::attr(href)').get().split('?')[0]
             product_url = response.urljoin(product_url)
-            yield scrapy.Request(product_url, callback=self.schedule_data, cookies=self.cookies, meta={'section':attr})
+            yield scrapy.Request(product_url, callback=self.schedule_data, meta={'section':attr})
         # Возможно, необходимо переписать follow на Request. Но это тема для обсуждения, поэтому пока что оставлю 
         if next_page is not None:
             next_page = response.urljoin(next_page)
@@ -79,10 +85,14 @@ class Wildberries(scrapy.Spider):
         data_view['timestamp'] = self.extract_data(response, key='timestamp')
         data_view['RPC'] = self.extract_data(response, key='RPC')
         data_view['url'] = response.url
-        data_view['marketing_tags'] = response.css('li.tags-group-item.j-tag a::text').getall()
+        data_view['marketing_tags'] = response.css(\
+            'li.tags-group-item.j-tag a::text').getall()
         data_view['title'] = self.extract_data(response, key='title')
         data_view['brand'] = response.css('span.brand::text').get()
-        data_view['section'] = response.meta['section']
+        try:    # На странице товара нет данных о секции
+            data_view['section'] = response.meta['section']
+        except KeyError:    # Исключения на случай прямой передачи товара. Можно добавить follow на <a>Назад</a>
+            data_view['section'] = []
         data_view['price_data'] = self.extract_data(response, key='price_data')
         data_view['stock'] = self.extract_data(response, key='stock')
         data_view['metadata'] = self.extract_data(response, key='metadata')
@@ -120,16 +130,18 @@ class Wildberries(scrapy.Spider):
             return name
 
         def get_price(response):
-            """Вычисляем цену. Если есть скидка берем значения старой и новой цены
-            после чего вычисляем процент скидки на позицию 
+            """Вычисляем цену. Если есть скидка берем значения старой и новой 
+            цены, после чего вычисляем процент скидки на позицию 
             """
             try:
                 final_cost = response.css('span.final-cost::text').get()
-                current = float(''.join(list(filter(lambda x: x.isdigit(), final_cost))))
+                current = float(''.join(list(filter(\
+                    lambda x: x.isdigit(), final_cost))))
                 old_price = response.css('span.old-price').get()
                 if old_price is not None: 
                     # Если есть старая цена нужно вычислить скидку
-                    origin = float(''.join(list(filter(lambda x: x.isdigit(), old_price))))
+                    origin = float(''.join(list(filter(\
+                        lambda x: x.isdigit(), old_price))))
                     sale_tag = int(100 - ((100*current)/origin))
                     return {
                         'current': current,
@@ -146,15 +158,17 @@ class Wildberries(scrapy.Spider):
             }
 
         def get_stock(response):
-            """Получаем значения наличия товара. Данные о кол-ве оставшихся
-            до сих пор не нашел. Текущий код не долговечен, т.к. json хранящий информацию
-            находтися под комментарием:" Удалить, когда гугл что-то там поменяет" 
+            """Получаем значения наличия товара. Данные о кол-ве оставшихся до
+            сих пор не нашел. Текущий код не долговечен, т.к. json хранящий
+            информацию находтися под комментарием:" 
+            Удалить, когда гугл что-то там поменяет" 
             """
             in_stock = ""
             for item in response.xpath('//script'): 
                 r = re.findall(r'data: {.*', item.get()) # Получаем словарь data
                 if len(r) > 0:
-                    in_stock = re.findall(r'"isSoldOut":(\w+)', r[0])[0] # Получаем значения ключа isSoldOut
+                    # Получаем значения ключа isSoldOut
+                    in_stock = re.findall(r'"isSoldOut":(\w+)', r[0])[0]
                     break
             return {
                 'in_stock': True if in_stock == 'false' else False,
@@ -163,34 +177,43 @@ class Wildberries(scrapy.Spider):
 
         def get_assets(response):
             """Это было интересно. Сразу берем главную картинку и список
-            всех остальных. Дальше проверяем наличие видео и view360, в случае 
+            всех остальных. Дальше проверяем наличие видео и view360, в случае
             наличия - вычисляем и их. Аккуратно! Ниже хрупкий костыль 
             """
             add_prefix = lambda x: 'https:' + str(x)
             result = {            
-                'main_image': add_prefix(response.css('a.j-photo-link::attr(href)').get()), # Ссылка на основное изображение товара
-                'set_image':  list(map(add_prefix, response.css('a.j-photo-link::attr(href)').getall())), # Список всех изображений товара
+                # Ссылка на основное изображение товара
+                'main_image': add_prefix(\
+                    response.css('a.j-photo-link::attr(href)').get()),
+                # Список всех изображений товара
+                'set_image':  list(map(add_prefix, \
+                    response.css('a.j-photo-link::attr(href)').getall())),
                 'video': [],
                 'view360': [],
             }
             # В первую очередь проверяем наличие 360 и Видео на товаре
             has_video, has_view360 = "", ""
             for item in response.xpath('//script'):
-                r = re.findall(r'data: {.*', item.get()) # Получаем словарь data
+                r = re.findall(r'data: {.*', item.get()) # Получаем словарь
                 if len(r) > 0:
                     has_video = re.findall(r'"hasVideo":(\w+)', r[0])[0]
                     has_view360 = re.findall(r'"has3D":(\w+)', r[0])[0]
             # Если есть видео добавляем
             if has_video == 'true': 
-                for selector in response.xpath("//meta[@property='og:video']").getall():
-                    result['video'] = list(map(add_prefix, re.findall(r'content="(.*)"', selector)))
+                for selector in response.xpath(\
+                    "//meta[@property='og:video']").getall():
+                    result['video'] = list(map(add_prefix, re.findall(\
+                        r'content="(.*)"', selector)))
 
             # А тут костыльное решение сильно замедляющее работу
             if has_view360 == 'true':
-                root = 'https:' + response.css("div#container_3d::attr(data-path)").get()
+                root = 'https:' + response.css(\
+                    "div#container_3d::attr(data-path)").get()
                 counter = 0
-                while True: # Какую прекрасную багулину тут словил, когда mapper сразу вычислял функции
-                    if requests.get('{}/{}.jpg'.format(root, counter)).status_code == 404:
+                # Какую прекрасную багулину тут словил, когда mapper сразу вычислял функции
+                while True:
+                    if requests.get('{}/{}.jpg'.format(root, counter)).\
+                            status_code == 404:
                         break
                     result['view360'].append('{}/{}.jpg'.format(root, counter))
                     counter += 1
@@ -201,9 +224,11 @@ class Wildberries(scrapy.Spider):
             """Возвращает словарь содержащий описание, а так же 
             все параметры, находящиеся на странице позиции 
             """
-            result = {'__description':  response.css('div.j-description p::text').get()} # Описание есть у всех товаров
+            result = {'__description':  response.css(\
+                'div.j-description p::text').get()} # Описание есть у всех товаров
             for param in response.css('div.pp'): # А дальше проходим по списку параметров
-                result[param.css('b::text').get()] = param.css('span::text').get()
+                result[param.css('b::text').get()] = \
+                    param.css('span::text').get()
             return result
 
         def get_variants(response):
